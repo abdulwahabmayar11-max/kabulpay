@@ -1,0 +1,257 @@
+
+name: Build Kabul Pay Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Create native Android project
+        run: |
+          mkdir -p app/src/main/java/com/kabulpay/app
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "KabulPay"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.kabulpay.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.kabulpay.app'
+                  minSdk 23
+                  targetSdk 28
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:label="Kabul Pay"
+                  android:allowBackup="false"
+                  android:supportsRtl="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/kabulpay/app/MainActivity.java <<'EOF'
+          package com.kabulpay.app;
+
+          import android.app.*;
+          import android.os.*;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.view.*;
+          import android.widget.*;
+          import java.util.Locale;
+
+          public class MainActivity extends Activity {
+              int balance = 5000;
+              int red = Color.rgb(166, 8, 27);
+              LinearLayout root, history;
+              TextView balanceView;
+              String transactions = "";
+
+              TextView text(String value, int size) {
+                  TextView t = new TextView(this);
+                  t.setText(value);
+                  t.setTextSize(size);
+                  t.setTextColor(Color.rgb(40,40,48));
+                  t.setPadding(8,12,8,12);
+                  return t;
+              }
+
+              Button button(String label) {
+                  Button b = new Button(this);
+                  b.setText(label);
+                  b.setTextColor(Color.WHITE);
+                  b.setBackgroundTintList(
+                      android.content.res.ColorStateList.valueOf(red));
+                  return b;
+              }
+
+              void addLine(String value) {
+                  TextView t = text(value, 15);
+                  history.addView(t, 0);
+              }
+
+              void refreshBalance() {
+                  balanceView.setText(String.format(
+                      Locale.US, "%,d AFN", balance));
+              }
+
+              void transfer(boolean addMoney) {
+                  EditText name = new EditText(this);
+                  name.setHint(addMoney ? "یادداشت" : "نام گیرنده");
+                  EditText amount = new EditText(this);
+                  amount.setHint("مبلغ به افغانی");
+                  amount.setInputType(2);
+
+                  LinearLayout box = new LinearLayout(this);
+                  box.setOrientation(LinearLayout.VERTICAL);
+                  box.addView(name);
+                  box.addView(amount);
+
+                  new AlertDialog.Builder(this)
+                      .setTitle(addMoney ? "افزودن آزمایشی" : "ارسال آزمایشی")
+                      .setMessage("این عملیات پول واقعی انتقال نمی‌دهد.")
+                      .setView(box)
+                      .setNegativeButton("لغو", null)
+                      .setPositiveButton("تأیید", (d,w) -> {
+                          String n = name.getText().toString().trim();
+                          int a;
+                          try {
+                              a = Integer.parseInt(
+                                  amount.getText().toString());
+                          } catch(Exception e) {
+                              Toast.makeText(this,
+                                  "مبلغ معتبر وارد کن",
+                                  Toast.LENGTH_SHORT).show();
+                              return;
+                          }
+                          if(a <= 0 || a > 1000000 ||
+                              (!addMoney && a > balance) ||
+                              (!addMoney && n.isEmpty())) {
+                              Toast.makeText(this,
+                                  "مبلغ یا نام گیرنده درست نیست",
+                                  Toast.LENGTH_SHORT).show();
+                              return;
+                          }
+                          balance += addMoney ? a : -a;
+                          refreshBalance();
+                          addLine((addMoney ? "افزودن آزمایشی: +" :
+                              "ارسال آزمایشی: -") + a +
+                              " AFN" + (n.isEmpty() ? "" : " · " + n));
+                          Toast.makeText(this,
+                              "عملیات آزمایشی ثبت شد",
+                              Toast.LENGTH_SHORT).show();
+                      }).show();
+              }
+
+              @Override public void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  getWindow().setStatusBarColor(Color.rgb(100,0,10));
+                  getWindow().setNavigationBarColor(Color.BLACK);
+
+                  ScrollView scroll = new ScrollView(this);
+                  root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(20,20,20,25);
+                  root.setBackgroundColor(Color.rgb(247,247,250));
+                  scroll.addView(root);
+                  setContentView(scroll);
+
+                  TextView title = text("🟡 کابل پی | Kabul Pay", 25);
+                  title.setTextColor(red);
+                  title.setTypeface(null, Typeface.BOLD);
+                  root.addView(title);
+                  root.addView(text("کیف پول دیجیتالی · نسخهٔ آزمایشی", 14));
+
+                  LinearLayout card = new LinearLayout(this);
+                  card.setOrientation(LinearLayout.VERTICAL);
+                  card.setPadding(18,15,18,18);
+                  card.setBackgroundColor(Color.WHITE);
+                  root.addView(card);
+
+                  card.addView(text("موجودی آزمایشی من", 16));
+                  balanceView = text("", 30);
+                  balanceView.setTextColor(red);
+                  balanceView.setTypeface(null, Typeface.BOLD);
+                  card.addView(balanceView);
+                  refreshBalance();
+
+                  Button send = button("ارسال پول آزمایشی");
+                  card.addView(send);
+                  send.setOnClickListener(v -> transfer(false));
+
+                  Button add = button("افزودن موجودی آزمایشی");
+                  card.addView(add);
+                  add.setOnClickListener(v -> transfer(true));
+
+                  root.addView(text("آخرین فعالیت‌ها", 21));
+                  history = new LinearLayout(this);
+                  history.setOrientation(LinearLayout.VERTICAL);
+                  history.setPadding(12,10,12,10);
+                  history.setBackgroundColor(Color.WHITE);
+                  root.addView(history);
+                  addLine("هنوز تراکنشی ثبت نشده است.");
+
+                  root.addView(text("دربارهٔ ما", 21));
+                  root.addView(text(
+                      "Kabul Pay یک نمونهٔ اولیهٔ کیف پول دیجیتالی است. " +
+                      "ارسال و افزودن موجودی در این نسخه صرفاً آزمایشی است. " +
+                      "برای انتقال پول واقعی، اتصال امن به سرور و " +
+                      "ارائه‌دهندهٔ مجاز پرداخت ضروری است.", 14));
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: |
+          gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kabul-Pay-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
